@@ -14,7 +14,6 @@ function newElement(type, x, y) {
     height: 0,
     isSelected: false,
   };
-  generateShape(element);
   return element;
 }
 
@@ -24,8 +23,9 @@ function generateShape(element) {
   switch (element.type) {
     case "selection": {
       element.draw = (rc, context) => {
-        context.fillStyle = "rgba(0, 0, 255, 0.10)";
+        const fillStyle = context.fillStyle;
         context.fillRect(element.x, element.y, element.width, element.height);
+        context.fillStyle = fillStyle;
       };
       break;
     }
@@ -81,25 +81,34 @@ function generateShape(element) {
       break;
     }
     case "text": {
-      if (element.text === undefined) {
-        element.text = prompt("What text do you want?");
-      }
       element.draw = (rc, context) => {
-        context.font = "20px Virgil";
-        const measure = context.measureText(element.text);
+        const font = context.font;
+        context.font = element.font;
         const height =
-          measure.actualBoundingBoxAscent + measure.actualBoundingBoxDescent;
+          element.measure.actualBoundingBoxAscent +
+          element.measure.actualBoundingBoxDescent;
         context.fillText(
           element.text,
-          element.x - measure.width / 2,
-          element.y + measure.actualBoundingBoxAscent - height / 2,
+          element.x,
+          element.y + 2 * element.measure.actualBoundingBoxAscent - height / 2,
         );
+        context.font = font;
       };
       break;
     }
     default:
       throw new Error("Unimplemented type " + element.type);
   }
+}
+
+function setSelection(selection) {
+  elements.forEach((element) => {
+    element.isSelected =
+      selection.x < element.x &&
+      selection.y < element.y &&
+      selection.x + selection.width > element.x + element.width &&
+      selection.y + selection.height > element.y + element.height;
+  });
 }
 function rotate(x1, y1, x2, y2, angle) {
   // 𝑎′𝑥=(𝑎𝑥−𝑐𝑥)cos𝜃−(𝑎𝑦−𝑐𝑦)sin𝜃+𝑐𝑥
@@ -114,7 +123,6 @@ function rotate(x1, y1, x2, y2, angle) {
 function App() {
   const [draggingElement, setDraggingElement] = React.useState(null);
   const [elementType, setElementType] = React.useState("selection");
-  const [selectedElements, setSelectedElements] = React.useState([]);
   function ElementOption({ type, children }) {
     return (
       <label>
@@ -141,21 +149,40 @@ function App() {
         width={window.innerWidth}
         height={window.innerHeight}
         onMouseDown={(e) => {
-          const element = newElement(
-            elementType,
-            e.clientX - e.target.offsetLeft,
-            e.clientY - e.target.offsetTop,
-          );
+          const x = e.clientX - e.target.offsetLeft;
+          const y = e.clientY - e.target.offsetTop;
+          const element = newElement(elementType, x, y);
+
+          if (elementType === "text") {
+            element.text = prompt("what text do you want?");
+            element.font = "20px Virgil";
+            const font = context.font;
+            context.font = element.font;
+            element.measure = context.measureText(element.text);
+            context.font = font;
+            const height =
+              element.measure.actualBoundingBoxAscent +
+              element.measure.actualBoundingBoxDescent;
+            // Center the text
+            element.x -= element.measure.width / 2;
+            element.y -= element.measure.actualBoundingBoxAscent;
+            element.width = element.measure.width;
+            element.height = height;
+          }
+          generateShape(element);
           elements.push(element);
-          setDraggingElement(element);
+          if (elementType === "text") {
+            setDraggingElement(null);
+          } else {
+            setDraggingElement(element);
+          }
           drawScene();
         }}
         onMouseUp={(e) => {
           setDraggingElement(null);
           if (elementType === "selection") {
-            elements.forEach((element) => {
-              element.isSelected = false;
-            });
+            elements.pop();
+            setSelection(draggingElement);
           }
           drawScene();
         }}
@@ -167,15 +194,7 @@ function App() {
           draggingElement.height = e.shiftKey ? width : height;
           generateShape(draggingElement);
           if (elementType === "selection") {
-            elements.forEach((element) => {
-              element.isSelected =
-                draggingElement.x <= element.x &&
-                draggingElement.y <= element.y &&
-                draggingElement.x + draggingElement.width >=
-                  element.x + element.width &&
-                draggingElement.y + draggingElement.height >=
-                  element.y + element.height;
-            });
+            setSelection(draggingElement);
           }
           drawScene();
         }}
@@ -185,19 +204,20 @@ function App() {
 }
 
 const rootElement = document.getElementById("root");
+ReactDOM.render(<App />, rootElement);
+const canvas = document.getElementById("canvas");
+const rc = rough.canvas(canvas);
+const context = canvas.getContext("2d");
 
 function drawScene() {
   ReactDOM.render(<App />, rootElement);
-
-  const canvas = document.getElementById("canvas");
-  const rc = rough.canvas(canvas);
-  const context = canvas.getContext("2d");
   context.clearRect(0, 0, canvas.width, canvas.height);
 
   elements.forEach((element) => {
     element.draw(rc, context);
     if (element.isSelected) {
       const margin = 4;
+      const lineDash = context.getLineDash();
       context.setLineDash([8, 4]);
       context.strokeRect(
         element.x - margin,
@@ -205,7 +225,7 @@ function drawScene() {
         element.width + margin * 2,
         element.height + margin * 2,
       );
-      context.setLineDash([]);
+      context.setLineDash(lineDash);
     }
   });
 }
